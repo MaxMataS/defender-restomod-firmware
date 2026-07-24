@@ -3,8 +3,8 @@
 **Título:** Formato de trama UART/SPI entre nodos STM32 y Raspberry Pi
 **Fase del programa:** Fase 1 — Viabilidad, Presupuesto y Adquisición
 **Documentos relacionados:** DOC-PH1-ARQ-001 (Arquitectura Técnica del Sistema)
-**Revisión:** 0.1 — Emisión inicial
-**Fecha:** 19 de julio de 2026
+**Revisión:** 0.2 — Corregido catálogo de mensajes del Nodo 2
+**Fecha:** 23 de julio de 2026
 **Clasificación:** Confidencial — Uso Interno
 
 ## Historial de Revisiones
@@ -12,6 +12,7 @@
 | Rev. | Fecha | Cambios |
 |------|-------|---------|
 | 0.1 | 19 jul 2026 | Emisión inicial. Define trama base, catálogo de mensajes v1 y checksum. |
+| 0.2 | 23 jul 2026 | Auditoría de consistencia: se corrige la Sección 4.2 — el catálogo de mensajes del Nodo 2 estaba desactualizado (mencionaba sensores de presión de aceite redundante, temp. diferencial y suspensión neumática, previos a la decisión de usar IMU + TPMS + temperatura de cabina, sin aire). Se redefine con los sensores realmente definidos en DOC-PH1-BOM-001 Sección 6.1 (Sistema F). |
 
 ---
 
@@ -79,20 +80,27 @@ Toda trama sigue este formato fijo:
 
 ### 4.2 Mensajes del Nodo 2 (sensores propios de marca) — dominio mixto
 
-| `MSG_ID` | Nombre | Payload | Formato | Rango / Unidad | Frecuencia |
-|---|---|---|---|---|---|
-| `0x20` | Presión de aceite redundante | 1 byte | uint8 | 0–150 PSI | 2 Hz |
-| `0x21` | Temp. diferencial | 1 byte | int8 | -40 a 150 °C | 1 Hz |
-| `0x22` | Estado sensor de suspensión | 1 byte | uint8 | Bitfield (a definir en Rev. 0.2) | 1 Hz |
+Sensores definidos en DOC-PH1-BOM-001 Sección 6.1 (Sistema F): IMU BNO085, kit TPMS 4 ruedas, sensor de temperatura/humedad de cabina SHT31-D. No incluye suspensión neumática (descartada, ver DOC-000-BRAND-001 Sección 3.1).
+
+| `MSG_ID` | Nombre | Payload | Formato | Rango / Unidad | Frecuencia | Dominio |
+|---|---|---|---|---|---|---|
+| `0x20` | Pitch (inclinación longitudinal) | 2 bytes | int16, big-endian | -900 a 900 (grados × 10) | 10 Hz | Crítico → Pi 1 |
+| `0x21` | Roll (inclinación lateral) | 2 bytes | int16, big-endian | -900 a 900 (grados × 10) | 10 Hz | Crítico → Pi 1 |
+| `0x22` | Temperatura de cabina | 1 byte | int8 | -40 a 85 °C | 1 Hz | No crítico → Pi 2 |
+| `0x23` | Humedad de cabina | 1 byte | uint8 | 0–100 %RH | 1 Hz | No crítico → Pi 2 |
+| `0x24` | Presión + temp. neumático — Delantero Izq. (FL) | 2 bytes | uint8 PSI + int8 °C | 0–150 PSI / -40 a 85 °C | 1 Hz | Crítico → Pi 1 |
+| `0x25` | Presión + temp. neumático — Delantero Der. (FR) | 2 bytes | uint8 PSI + int8 °C | 0–150 PSI / -40 a 85 °C | 1 Hz | Crítico → Pi 1 |
+| `0x26` | Presión + temp. neumático — Trasero Izq. (RL) | 2 bytes | uint8 PSI + int8 °C | 0–150 PSI / -40 a 85 °C | 1 Hz | Crítico → Pi 1 |
+| `0x27` | Presión + temp. neumático — Trasero Der. (RR) | 2 bytes | uint8 PSI + int8 °C | 0–150 PSI / -40 a 85 °C | 1 Hz | Crítico → Pi 1 |
 
 ### 4.3 Reservado para expansión
 
-Los rangos `0x30`–0x3F` (Nodo 1) y `0x40`–0x4F` (Nodo 2) quedan reservados para mensajes futuros sin necesidad de romper compatibilidad con el software ya escrito.
+Los rangos `0x28`–`0x2F` (Nodo 2) y `0x30`–`0x3F` (Nodo 1) quedan reservados para mensajes futuros sin necesidad de romper compatibilidad con el software ya escrito.
 
 ## 5. Cálculo de Checksum
 
 El checksum es un **XOR simple** de todos los bytes desde `NODE_ID` hasta el final del `PAYLOAD` (no incluye `START` ni el propio `CHECKSUM`).
-> **Nota de diseño:** se eligió XOR simple para la Rev. 0.1 por su bajo costo computacional en el STM32. Si en pruebas de banco se detecta una tasa de error no despreciable, la Rev. 0.2 de este documento migrará a CRC-8 (polinomio `0x07`), que detecta más patrones de error a cambio de un costo de cómputo ligeramente mayor.
+> **Nota de diseño:** se eligió XOR simple para la Rev. 0.1 por su bajo costo computacional en el STM32. Si en pruebas de banco se detecta una tasa de error no despreciable, una revisión futura de este documento migrará a CRC-8 (polinomio `0x07`), que detecta más patrones de error a cambio de un costo de cómputo ligeramente mayor.
 
 ## 6. Ejemplo de Trama Anotado
 
@@ -110,7 +118,7 @@ Trama de RPM = 3200 rpm, enviada por el Nodo 1:
 ## 7. Manejo de Errores y Timeouts
 
 - **Checksum inválido:** la trama se descarta silenciosamente en el receptor (Raspberry Pi). No se solicita retransmisión — el siguiente ciclo de envío (20 Hz para datos críticos) llega en 50 ms, suficientemente rápido para no afectar la UX del clúster.
-- **Timeout de nodo:** si la Raspberry Pi #1 no recibe ningún mensaje válido del Nodo 1 durante más de **500 ms**, el clúster de instrumentos debe mostrar un estado de "dato no disponible" (ej. agujas en cero con indicador visual de falla), nunca congelar el último valor conocido sin aviso.
+- **Timeout de nodo:** si la Raspberry Pi #1 no recibe ningún mensaje válido del Nodo 1 durante más de **500 ms**, el clúster de instrumentos debe mostrar un estado de "dato no disponible" (ej. agujas en cero con indicador visual de falla), nunca congelar el último valor conocido sin aviso. El mismo criterio aplica a los mensajes críticos del Nodo 2 (`0x20`-`0x21`, `0x24`-`0x27`).
 - **Pérdida de sincronización:** si el receptor detecta un `START` (`0xAA`) en una posición inesperada dentro del buffer, descarta bytes hasta encontrar el siguiente `START` válido seguido de una trama con checksum correcto.
 
 ## 8. Heartbeat entre Raspberry Pi #1 y #2
@@ -129,6 +137,6 @@ Si la Raspberry Pi #1 no recibe un heartbeat de la Pi #2 durante más de **3 seg
 ## 9. Próximos Pasos
 
 - [ ] Validar este protocolo con tráfico sintético generado por el STM32 Nodo 3 (herramienta de banco) antes de conectar el arnés real.
-- [ ] Definir el bitfield del sensor de suspensión (`MSG_ID 0x22`) en la Rev. 0.2, una vez seleccionado el sensor específico.
 - [ ] Evaluar migración de checksum XOR → CRC-8 según resultados de la prueba de banco.
 - [ ] Implementar el parser de este protocolo en el software de la Raspberry Pi #1 (`software/pi-cluster/`) y #2 (`software/pi-infotainment/`).
+- [ ] Escribir el firmware del Nodo 2 siguiendo el catálogo de la Sección 4.2 (en curso).
