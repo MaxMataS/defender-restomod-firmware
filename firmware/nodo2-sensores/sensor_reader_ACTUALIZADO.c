@@ -7,30 +7,20 @@
  * reenviarlos por UART — datos criticos (IMU, TPMS) a Pi 1, dato no
  * critico (temperatura/humedad de cabina) a Pi 2.
  *
- * IMPORTANTE — dos sensores requieren trabajo adicional antes de
- * producción, marcado explicitamente con TODO en el codigo:
+ * ACTUALIZACION (23 jul 2026): la lectura del BNO085 ya NO es un stub -
+ * usa la integracion real sobre la libreria SH-2 (bno085_driver.c/h +
+ * sh2_hal_stm32.c/h). Requiere descargar por separado el codigo fuente
+ * oficial de CEVA (https://github.com/ceva-dsp/sh2) - ver comentarios
+ * en bno085_driver.h para el detalle completo.
  *
- *   1. BNO085 (IMU): este sensor es un "sensor hub" con protocolo SHTP
- *      propio, no un simple sensor I2C de registros planos. Leer
- *      angulos de Euler correctamente requiere la libreria oficial
- *      SH-2 de CEVA/Hillcrest (o el port de Adafruit/SparkFun). Este
- *      archivo NO reimplementa ese protocolo — expone el punto de
- *      integracion (BNO085_ReadEulerAngles) con un TODO claro.
- *
- *   2. TPMS (canbustpms.com): el proveedor no publica el formato de
- *      trama de su modulo RS232/TTL. Este archivo SI implementa la
- *      recepcion por interrupcion con buffer circular (funcional y
- *      lista para usarse), pero el parseo de la trama real
- *      (TPMS_ParseFrame) tiene un TODO hasta conseguir la hoja de
- *      datos — ver DOC-PH1-BOM-001 Seccion 9, punto pendiente.
- *
- * El SHT31-D (temperatura/humedad de cabina) SI esta completo y
- * correcto — es un sensor I2C simple y bien documentado por Sensirion.
+ * Sigue pendiente el TPMS (canbustpms.com no publica formato de trama) -
+ * ver DOC-PH1-BOM-001 Seccion 9.
  */
 
 #include "sensor_reader.h"
 #include "sensor_config.h"
 #include "uart_proto.h"
+#include "bno085_driver.h"
 #include <string.h>
 
 /* ---------------------------------------------------------------------- *
@@ -125,31 +115,9 @@ static bool SHT31_ReadMeasurement(int8_t *out_temp_c, uint8_t *out_humidity_pct)
  *  completa del protocolo SHTP)
  * ======================================================================== */
 
-/**
- * @brief TODO: reemplazar este cuerpo con una llamada real a la libreria
- *        SH-2 (CEVA/Hillcrest) inicializada sobre I2C, solicitando el
- *        reporte "Rotation Vector" o "Game Rotation Vector" y
- *        convirtiendo el cuaternion resultante a angulos de Euler
- *        pitch/roll. Mientras tanto, esta funcion solo verifica que el
- *        sensor responda en el bus (HAL_I2C_IsDeviceReady) para que el
- *        resto del pipeline (protocolo, Pi 1) pueda probarse end-to-end
- *        con valores en cero, sin bloquear el desarrollo del resto del
- *        Nodo 2 a la espera de integrar el driver del fabricante.
- */
-static bool BNO085_ReadEulerAngles(int16_t *out_pitch_x10, int16_t *out_roll_x10)
-{
-    if (HAL_I2C_IsDeviceReady(&SENSCFG_I2C_HANDLE, SENSCFG_BNO085_I2C_ADDR << 1,
-                               2, 10) != HAL_OK) {
-        return false;
-    }
-
-    /* TODO(firmware): integrar libreria SH-2 real. Valores en cero por
-     * ahora — NO representan inclinacion real del vehiculo. */
-    *out_pitch_x10 = 0;
-    *out_roll_x10  = 0;
-
-    return true;
-}
+/* BNO085_ReadEulerAngles() ahora se resuelve directamente contra la
+ * implementacion real en bno085_driver.c (incluido arriba via
+ * bno085_driver.h) - ya no hace falta ningun wrapper local aqui. */
 
 /* ========================================================================
  *  TPMS — recepcion por interrupcion + parseo (parseo pendiente)
